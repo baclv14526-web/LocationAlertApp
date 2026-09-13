@@ -1,34 +1,31 @@
 plugins {
     id 'com.android.application'
-    id 'kotlin-android'
-    id 'kotlin-kapt'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
-    compileSdkVersion 34
-    buildToolsVersion "34.0.0"
+    namespace     "com.locationalert"   // AGP 7.3+ yêu cầu bắt buộc
+    compileSdk    34
 
     defaultConfig {
         applicationId "com.locationalert"
-        minSdkVersion 28  // Android 9 (Pie)
-        targetSdkVersion 34
-        // Cho phép CI ghi đè versionCode / versionName qua -P flag
+        minSdk        28                // Android 9 (Pie)
+        targetSdk     34
+        // CI ghi đè qua -PRELEASE_VERSION_CODE / -PRELEASE_VERSION_NAME
         versionCode  (project.hasProperty('RELEASE_VERSION_CODE')
                       ? project.RELEASE_VERSION_CODE.toInteger() : 1)
         versionName  (project.hasProperty('RELEASE_VERSION_NAME')
-                      ? project.RELEASE_VERSION_NAME : "1.0")
+                      ? project.RELEASE_VERSION_NAME           : "1.0")
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // ── Signing (chỉ dùng khi build CI, bỏ qua nếu thiếu property) ──
+    // ── Signing: kích hoạt khi CI truyền -P, fallback debug khi build local ──
     signingConfigs {
         release {
-            if (project.hasProperty('RELEASE_STORE_FILE')) {
-                storeFile     file(project.RELEASE_STORE_FILE)
-                storePassword project.RELEASE_STORE_PASSWORD
-                keyAlias      project.RELEASE_KEY_ALIAS
-                keyPassword   project.RELEASE_KEY_PASSWORD
-            }
+            storeFile     file(project.findProperty('RELEASE_STORE_FILE')     ?: 'dummy.jks')
+            storePassword      (project.findProperty('RELEASE_STORE_PASSWORD') ?: '')
+            keyAlias           (project.findProperty('RELEASE_KEY_ALIAS')      ?: '')
+            keyPassword        (project.findProperty('RELEASE_KEY_PASSWORD')   ?: '')
         }
     }
 
@@ -36,10 +33,9 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // Ký APK nếu signingConfig có đủ thông tin
-            if (project.hasProperty('RELEASE_STORE_FILE')) {
-                signingConfig signingConfigs.release
-            }
+            signingConfig project.hasProperty('RELEASE_STORE_FILE')
+                          ? signingConfigs.release
+                          : signingConfigs.debug
         }
     }
 
@@ -58,13 +54,12 @@ android {
 }
 
 dependencies {
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'com.google.android.gms:play-services-location:21.0.1'
-    implementation 'com.google.android.gms:play-services-maps:18.2.0'
     implementation 'androidx.lifecycle:lifecycle-service:2.7.0'
     implementation 'androidx.activity:activity-ktx:1.8.2'
     implementation 'androidx.fragment:fragment-ktx:1.6.2'

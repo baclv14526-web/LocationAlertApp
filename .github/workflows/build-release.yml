@@ -3,10 +3,10 @@ name: 📍 Build & Release LocationAlert APK
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:          # Cho phép chạy thủ công từ tab Actions
+  workflow_dispatch:
 
 permissions:
-  contents: write             # Cần để tạo/ghi đè GitHub Release
+  contents: write
 
 jobs:
   build-and-release:
@@ -26,14 +26,11 @@ jobs:
           java-version: '17'
 
       # ── 3. ANDROID SDK ────────────────────────────────────────────
-      # ubuntu-latest có sẵn ANDROID_HOME nhưng thiếu platform-34.
-      # Cài thêm platform + build-tools khớp compileSdk trong build.gradle.
       - name: Install Android SDK components
         run: |
           set -e
           SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
 
-          # Tải cmdline-tools nếu chưa có
           if [ ! -f "$SDKM" ]; then
             echo "Downloading cmdline-tools..."
             wget -q "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
@@ -45,10 +42,8 @@ jobs:
             SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           fi
 
-          # Chấp nhận license không cần tương tác
           yes | "$SDKM" --licenses > /dev/null 2>&1 || true
 
-          # Cài đúng platform + build-tools mà build.gradle dùng
           "$SDKM" \
             "platforms;android-34" \
             "platforms;android-28" \
@@ -58,18 +53,40 @@ jobs:
           echo "Android SDK ✓"
 
       # ── 4. GRADLE WRAPPER ─────────────────────────────────────────
-      # Tạo wrapper nếu repo chưa có (thường xảy ra với project mới).
-      - name: Ensure Gradle wrapper exists
+      # Nếu gradle-wrapper.jar chưa có → dùng system gradle tạo wrapper
+      # rồi mới chạy ./gradlew. Đây là bước quan trọng nhất với repo mới.
+      - name: Ensure Gradle wrapper is complete
         run: |
-          if [ ! -f "gradlew" ]; then
-            echo "gradlew not found → generating wrapper 8.7..."
+          set -e
+
+          WRAPPER_JAR="gradle/wrapper/gradle-wrapper.jar"
+          WRAPPER_PROPS="gradle/wrapper/gradle-wrapper.properties"
+
+          # Tạo properties nếu chưa có
+          if [ ! -f "$WRAPPER_PROPS" ]; then
+            mkdir -p gradle/wrapper
+            cat > "$WRAPPER_PROPS" << 'PROPS'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.7-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          PROPS
+          fi
+
+          # Tạo jar nếu chưa có (dùng system gradle)
+          if [ ! -f "$WRAPPER_JAR" ]; then
+            echo "gradle-wrapper.jar missing → generating via system gradle..."
             gradle wrapper --gradle-version=8.7 --distribution-type=bin
           fi
+
           chmod +x gradlew
-          echo "Gradle wrapper ✓"
+          echo "Wrapper ready ✓"
+          java -version
+          ./gradlew --version
 
       # ── 5. CACHE GRADLE ───────────────────────────────────────────
-      - name: Cache Gradle dependencies
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
@@ -78,9 +95,7 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      # ── 6. TẠO KEYSTORE TẠM (EPHEMERAL) ──────────────────────────
-      # Sinh password ngẫu nhiên 24 ký tự → mask trong log → xóa sau build.
-      # Không cần cấu hình bất kỳ GitHub Secret nào trước.
+      # ── 6. TẠO KEYSTORE TẠM ───────────────────────────────────────
       - name: Generate ephemeral keystore
         run: |
           set -e
@@ -88,46 +103,38 @@ jobs:
           KS_PW=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 24)
           K_ALIAS="locationalert"
 
-          # Ẩn password khỏi log
           echo "::add-mask::${KS_PW}"
 
-          keytool -genkeypair -v                           \
-            -keystore  "${KS_FILE}"                        \
-            -alias     "${K_ALIAS}"                        \
-            -keyalg    RSA                                 \
-            -keysize   2048                                \
-            -validity  10000                               \
-            -storepass "${KS_PW}"                          \
-            -keypass   "${KS_PW}"                          \
+          keytool -genkeypair -v                              \
+            -keystore  "${KS_FILE}"                           \
+            -alias     "${K_ALIAS}"                           \
+            -keyalg    RSA                                    \
+            -keysize   2048                                   \
+            -validity  10000                                  \
+            -storepass "${KS_PW}"                             \
+            -keypass   "${KS_PW}"                             \
             -dname     "CN=LocationAlert,OU=Dev,O=Personal,L=HaNoi,S=HaNoi,C=VN" \
             -noprompt
 
-          # Xuất biến để các step sau dùng
           echo "KS_FILE=${KS_FILE}"  >> "$GITHUB_ENV"
           echo "KS_PW=${KS_PW}"      >> "$GITHUB_ENV"
           echo "K_ALIAS=${K_ALIAS}"  >> "$GITHUB_ENV"
-          echo "Keystore generated ✓"
+          echo "Keystore ✓"
 
       # ── 7. BUILD & KÝ APK ─────────────────────────────────────────
-      # -P truyền signing config vào build.gradle qua project.hasProperty()
-      # --no-daemon: phù hợp với CI (tiết kiệm RAM, không treo process)
       - name: Build signed release APK
-        env:
-          BUILD_VERSION_CODE: ${{ github.run_number }}
-          BUILD_VERSION_NAME: "1.0.${{ github.run_number }}"
         run: |
           ./gradlew assembleRelease          \
             --no-daemon                      \
             --stacktrace                     \
-            -PRELEASE_STORE_FILE="${{ env.KS_FILE }}"      \
-            -PRELEASE_STORE_PASSWORD="${{ env.KS_PW }}"    \
-            -PRELEASE_KEY_ALIAS="${{ env.K_ALIAS }}"       \
-            -PRELEASE_KEY_PASSWORD="${{ env.KS_PW }}"      \
+            -PRELEASE_STORE_FILE="${{ env.KS_FILE }}"         \
+            -PRELEASE_STORE_PASSWORD="${{ env.KS_PW }}"       \
+            -PRELEASE_KEY_ALIAS="${{ env.K_ALIAS }}"          \
+            -PRELEASE_KEY_PASSWORD="${{ env.KS_PW }}"         \
             -PRELEASE_VERSION_CODE="${{ github.run_number }}" \
             -PRELEASE_VERSION_NAME="1.0.${{ github.run_number }}"
 
-      # ── 8. XÓA KEYSTORE NGAY SAU BUILD ───────────────────────────
-      # if: always() đảm bảo chạy dù bước 7 lỗi
+      # ── 8. XÓA KEYSTORE ───────────────────────────────────────────
       - name: Delete keystore
         if: always()
         run: |
@@ -141,8 +148,7 @@ jobs:
           APK_SRC="app/build/outputs/apk/release/app-release.apk"
 
           if [ ! -f "$APK_SRC" ]; then
-            echo "❌ APK không tìm thấy tại $APK_SRC"
-            echo "── Nội dung outputs ──"
+            echo "❌ APK không tìm thấy!"
             find app/build/outputs -type f 2>/dev/null || echo "(trống)"
             exit 1
           fi
@@ -153,9 +159,9 @@ jobs:
           cp "$APK_SRC" "out/${APK_NAME}"
 
           SIZE=$(du -h "out/${APK_NAME}" | cut -f1)
-          echo "✅ APK: ${APK_NAME} (${SIZE})"
-          echo "APK_VERSION=${VERSION}"  >> "$GITHUB_ENV"
-          echo "APK_NAME=${APK_NAME}"    >> "$GITHUB_ENV"
+          echo "✅ ${APK_NAME} (${SIZE})"
+          echo "APK_VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "APK_NAME=${APK_NAME}"   >> "$GITHUB_ENV"
 
       # ── 10. UPLOAD ARTIFACT (backup 30 ngày) ──────────────────────
       - name: Upload APK artifact
@@ -165,8 +171,7 @@ jobs:
           path: out/*.apk
           retention-days: 30
 
-      # ── 11. GITHUB RELEASE (link tải luôn mới nhất) ───────────────
-      # tag_name: latest bị ghi đè mỗi build → URL tải APK không đổi
+      # ── 11. GITHUB RELEASE ────────────────────────────────────────
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -185,32 +190,27 @@ jobs:
             ### 📲 Cài đặt trên Realme 2 (Android 9+)
 
             1. Nhấn vào file **`.apk`** bên dưới để tải về
-            2. Mở file vừa tải từ thanh thông báo / Trình quản lý file
-            3. Nếu bị chặn → **Cài đặt → Bảo mật → Nguồn không xác định → Bật cho trình duyệt**
-            4. Nhấn **Cài đặt** và chờ hoàn tất
-            5. Mở app → cấp quyền **Vị trí (Luôn luôn)**, **Micro**, **Lưu trữ**, **Thông báo**
+            2. Mở file từ thanh thông báo / Trình quản lý file
+            3. Nếu bị chặn → **Cài đặt → Bảo mật → Nguồn không xác định → Bật**
+            4. Nhấn **Cài đặt**
+            5. Mở app → cấp quyền **Vị trí (Luôn luôn)**, **Micro**, **Thông báo**
 
             ---
 
-            ### 🎯 Cách dùng
+            ### 🎯 Cách dùng nhanh
 
             | Bước | Thao tác |
             |------|----------|
-            | 1 | Nhập địa điểm bằng **giọng nói 🎤** hoặc **gõ tay** rồi nhấn **Tìm** |
+            | 1 | Nhập địa điểm bằng **🎤 giọng nói** hoặc **gõ tay** → nhấn **Tìm** |
             | 2 | Hoặc nhấn **📌 Tọa độ** để nhập lat/lon thủ công |
-            | 3 | Chọn **bán kính cảnh báo** (20–30m) bằng thanh kéo |
-            | 4 | *(Tuỳ chọn)* Chọn **file MP3** làm âm báo |
+            | 3 | Kéo thanh chọn **bán kính cảnh báo** (20–30m) |
+            | 4 | *(Tuỳ chọn)* Chọn file **MP3** làm âm báo riêng |
             | 5 | Nhấn **▶ BẮT ĐẦU THEO DÕI** |
-            | 6 | Khi cách đích ≤ bán kính → **rung + phát âm thanh + thông báo** |
-
-            ### 🎤 Nhập giọng nói
-            Nói tên địa điểm bằng tiếng Việt, ví dụ:
-            > *"Hồ Hoàn Kiếm Hà Nội"*, *"Sân bay Nội Bài"*, *"Bệnh viện Bạch Mai"*
+            | ✅ | Khi cách đích ≤ bán kính → **rung + âm thanh + thông báo** |
 
             ---
 
-            > ⚠️ **Lưu ý chữ ký:** Mỗi lần build dùng chữ ký tạm mới.
-            > Nếu đã cài bản cũ, hãy **gỡ cài đặt trước** rồi cài bản này.
+            > ⚠️ Mỗi build dùng chữ ký tạm mới. Nếu đã cài bản cũ hãy **gỡ trước** rồi cài lại.
 
-            **Commit:** `${{ github.sha }}`  |  **Build:** #${{ github.run_number }}
+            **Commit:** `${{ github.sha }}` | **Build:** #${{ github.run_number }}
           files: out/*.apk
