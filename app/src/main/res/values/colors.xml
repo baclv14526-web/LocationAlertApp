@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark theme palette -->
+    <color name="bg_dark">#0F1117</color>
+    <color name="surface_card">#1A1D27</color>
+    <color name="surface_elevated">#252836</color>
+    <color name="divider">#2A2D3E</color>
+
+    <!-- Text -->
+    <color name="text_primary">#E8EAED</color>
+    <color name="text_secondary">#9AA0B4</color>
+    <color name="text_hint">#5C6170</color>
+    <color name="white">#FFFFFF</color>
+
+    <!-- Accents -->
+    <color name="accent_blue">#4F8EF7</color>
+    <color name="accent_green">#2DD4A0</color>
+    <color name="alert_orange">#F59E0B</color>
+    <color name="alert_red">#EF4444</color>
+    <color name="alert_yellow">#EAB308</color>
+
+    <!-- System -->
+    <color name="colorPrimary">#4F8EF7</color>
+    <color name="colorPrimaryDark">#0F1117</color>
+    <color name="colorAccent">#2DD4A0</color>
+</resources>

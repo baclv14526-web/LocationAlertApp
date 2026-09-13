@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Location Alert</string>
+    <string name="channel_name">Theo dõi vị trí</string>
+    <string name="channel_description">Theo dõi vị trí GPS trong nền</string>
+</resources>

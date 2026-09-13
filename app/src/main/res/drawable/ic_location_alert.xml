@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF4F8EF7"
+        android:pathData="M12,2C8.13,2 5,5.13 5,9c0,5.25 7,13 7,13s7,-7.75 7,-13c0,-3.87 -3.13,-7 -7,-7zM12,11.5c-1.38,0 -2.5,-1.12 -2.5,-2.5s1.12,-2.5 2.5,-2.5 2.5,1.12 2.5,2.5 -1.12,2.5 -2.5,2.5z" />
+    <!-- Bell overlay -->
+    <path
+        android:fillColor="#FF2DD4A0"
+        android:pathData="M18,16l2,2v1h-16v-1l2,-2v-5c0,-3.07 1.64,-5.64 4.5,-6.32V4a1.5,1.5 0,0 1,3 0v0.68C16.36,5.36 18,7.93 18,11v5zM14,19c0,1.1 -0.9,2 -2,2s-2,-0.9 -2,-2h4z"
+        android:translateX="4"
+        android:translateY="4"
+        android:scaleX="0.5"
+        android:scaleY="0.5"/>
+</vector>
