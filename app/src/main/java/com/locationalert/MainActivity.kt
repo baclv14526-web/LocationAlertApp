@@ -25,6 +25,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
 import com.locationalert.databinding.ActivityMainBinding
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import java.security.KeyStore
 
 class MainActivity : AppCompatActivity() {
 
@@ -261,6 +265,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ── SSL helper (fix Android 9 TLS handshake) ────────────────────────────────
+    private fun buildSslContext(): SSLContext {
+        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        tmf.init(null as KeyStore?)
+        return SSLContext.getInstance("TLSv1.2").also {
+            it.init(null, tmf.trustManagers, null)
+        }
+    }
+
     // ── Geocoding ─────────────────────────────────────────────────────────────
     private fun geocodeAddress(address: String) {
         binding.tvStatus.text = "🔍 Đang tìm địa chỉ..."
@@ -270,9 +283,12 @@ class MainActivity : AppCompatActivity() {
                 val url  = java.net.URL(
                     "https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=1&accept-language=vi"
                 )
-                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                    setRequestProperty("User-Agent", "LocationAlertApp/1.0")
-                    connectTimeout = 10_000; readTimeout = 10_000
+                val conn = (url.openConnection() as HttpsURLConnection).apply {
+                    sslSocketFactory = buildSslContext().socketFactory
+                    setRequestProperty("User-Agent", "LocationAlertApp/1.0 Android")
+                    setRequestProperty("Accept", "application/json")
+                    connectTimeout = 20_000; readTimeout = 20_000
+                    instanceFollowRedirects = true
                 }
                 val json = org.json.JSONArray(conn.inputStream.bufferedReader().readText())
                 runOnUiThread {

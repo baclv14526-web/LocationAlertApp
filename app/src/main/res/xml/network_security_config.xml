@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Android 9 (API 28) mặc định block một số TLS handshake.
+        Cấu hình này trust system CA cho các domain OSM/OSRM/GraphHopper.
+    -->
+    <domain-config cleartextTrafficPermitted="false">
+        <!-- Nominatim geocoding -->
+        <domain includeSubdomains="true">nominatim.openstreetmap.org</domain>
+        <!-- OSRM routing -->
+        <domain includeSubdomains="true">router.project-osrm.org</domain>
+        <!-- OSRM mirror dự phòng -->
+        <domain includeSubdomains="true">routing.openstreetmap.de</domain>
+        <trust-anchors>
+            <certificates src="system"/>
+            <certificates src="user"/>
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
