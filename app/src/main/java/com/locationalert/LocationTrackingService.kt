@@ -114,6 +114,7 @@ class LocationTrackingService : Service() {
     }
 
     fun hasTarget() = hasTarget
+    fun getTarget(): Pair<Double, Double>? = if (hasTarget) Pair(targetLat, targetLon) else null
     fun isTracking() = isTracking
 
     // ── Tracking Control ─────────────────────────────────────────────────────

@@ -17,4 +17,16 @@
         <item name="android:background">@drawable/bg_card</item>
         <item name="android:padding">16dp</item>
     </style>
+
+    <!-- Style cho dialog danh sách đường -->
+    <style name="RouteDialogTheme" parent="Theme.MaterialComponents.DayNight.Dialog.Alert">
+        <item name="colorSurface">@color/surface_card</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="android:background">@color/surface_card</item>
+        <item name="buttonBarPositiveButtonStyle">@style/RouteDialogButton</item>
+    </style>
+
+    <style name="RouteDialogButton" parent="Widget.MaterialComponents.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/accent_blue</item>
+    </style>
 </resources>

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/bg_dark">
+
+    <!-- Header tổng quan -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="@color/surface_card"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvRouteSummaryDist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="-- km"
+                android:textColor="@color/accent_blue"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvRouteSummaryTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="-- phút"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"
+                android:layout_marginTop="2dp"/>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvRouteStepCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="-- bước"
+            android:textColor="@color/text_hint"
+            android:textSize="13sp"
+            android:gravity="end|center_vertical"
+            android:layout_gravity="center_vertical"/>
+    </LinearLayout>
+
+    <!-- Divider -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/divider"/>
+
+    <!-- Loading -->
+    <LinearLayout
+        android:id="@+id/layoutRouteLoading"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ProgressBar
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:indeterminateTint="@color/accent_blue"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Đang tải đường đi..."
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:layout_marginTop="10dp"/>
+    </LinearLayout>
+
+    <!-- Error state -->
+    <TextView
+        android:id="@+id/tvRouteError"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textColor="@color/alert_red"
+        android:textSize="14sp"
+        android:padding="20dp"
+        android:gravity="center"
+        android:visibility="gone"/>
+
+    <!-- Danh sách bước đường -->
+    <ScrollView
+        android:id="@+id/scrollRouteSteps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxHeight="420dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/layoutRouteSteps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="8dp"/>
+    </ScrollView>
+
+</LinearLayout>
