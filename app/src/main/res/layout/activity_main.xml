@@ -253,8 +253,8 @@
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="4dp"
                 android:valueFrom="20"
-                android:valueTo="30"
-                android:value="25"
+                android:valueTo="300"
+                android:value="50"
                 android:stepSize="1"
                 app:thumbColor="@color/accent_blue"
                 app:trackColorActive="@color/accent_blue"
@@ -273,7 +273,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="30m"
+                    android:text="300m"
                     android:textColor="@color/text_hint"
                     android:textSize="11sp" />
             </LinearLayout>

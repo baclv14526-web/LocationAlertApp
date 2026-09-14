@@ -20,10 +20,10 @@ class LocationTrackingService : Service() {
         const val NOTIFICATION_ID = 1001
         const val TAG = "LocationTrackingService"
 
-        // Default alert radius 20–30m (we use 25m as center)
-        const val DEFAULT_RADIUS = 25f
+        // Default alert radius 20–300m
+        const val DEFAULT_RADIUS = 50f
         const val MIN_RADIUS = 20f
-        const val MAX_RADIUS = 30f
+        const val MAX_RADIUS = 300f
     }
 
     // ── Binder ───────────────────────────────────────────────────────────────
