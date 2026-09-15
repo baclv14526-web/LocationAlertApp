@@ -1,12 +1,8 @@
 package com.locationalert
 
 import android.util.Log
-import okhttp3.ConnectionSpec
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.TlsVersion
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 /**
  * Routing helper dùng OkHttp — xử lý TLS đúng trên Android 9 (API 28).
@@ -24,21 +20,8 @@ object RouteHelper {
 
     private const val TAG = "RouteHelper"
 
-    // ── OkHttpClient dùng chung (singleton, thread-safe) ─────────────────────
-    private val client: OkHttpClient by lazy {
-        val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-            .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
-            .allEnabledCipherSuites()
-            .build()
-
-        OkHttpClient.Builder()
-            .connectionSpecs(listOf(spec, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
-    }
+    // Dùng chung 1 OkHttpClient với toàn app (xem NetworkClient.kt)
+    private val client get() = NetworkClient.instance
 
     private val ENDPOINTS = listOf(
         "https://router.project-osrm.org/route/v1/driving/",
@@ -66,6 +49,18 @@ object RouteHelper {
         fromLat: Double, fromLon: Double,
         toLat: Double,   toLon: Double
     ): RouteResult {
+        // Nếu 2 điểm gần như trùng nhau (< 5m) — không cần gọi API,
+        // tránh lỗi "same coordinate" từ OSRM và tiết kiệm request
+        val quickDist = FloatArray(1)
+        android.location.Location.distanceBetween(fromLat, fromLon, toLat, toLon, quickDist)
+        if (quickDist[0] < 5f) {
+            return RouteResult(
+                steps = listOf(RouteStep("", "Bạn đã ở gần điểm đến", 0, "arrive")),
+                totalDistanceM = quickDist[0].toInt(),
+                totalDurationSec = 0
+            )
+        }
+
         val coords = "$fromLon,$fromLat;$toLon,$toLat"
         val params = "?steps=true&annotations=false&overview=false"
         val errors = mutableListOf<String>()

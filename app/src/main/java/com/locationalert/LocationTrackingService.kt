@@ -17,7 +17,9 @@ class LocationTrackingService : Service() {
 
     companion object {
         const val CHANNEL_ID = "location_tracking_channel"
+        const val ALERT_CHANNEL_ID = "alert_channel"
         const val NOTIFICATION_ID = 1001
+        const val ALERT_NOTIFICATION_ID = 1002
         const val TAG = "LocationTrackingService"
 
         // Default alert radius 20–300m
@@ -198,11 +200,19 @@ class LocationTrackingService : Service() {
                 alertTriggered = true
                 callback?.onArrivalAlert(distance)
             }
-        } else if (distance > alertRadius + 10f) {
-            // Reset alert when user moves away enough
+        } else if (distance > alertRadius + hysteresisBuffer()) {
+            // Reset alert khi đã ra xa đủ (tránh dao động qua lại ở biên radius)
             alertTriggered = false
         }
     }
+
+    /**
+     * Buffer chống dao động (hysteresis) khi reset trạng thái alert.
+     * Với radius nhỏ (20-30m) dùng buffer cố định 10m như cũ.
+     * Với radius lớn (tới 300m) buffer tỉ lệ 20% để tránh cảnh báo
+     * lặp lại liên tục khi xe di chuyển quanh biên radius.
+     */
+    private fun hysteresisBuffer(): Float = maxOf(10f, alertRadius * 0.2f)
 
     // ── Alert ────────────────────────────────────────────────────────────────
     private fun triggerAlert(distance: Float) {
@@ -242,16 +252,25 @@ class LocationTrackingService : Service() {
                 mediaPlayer!!.setDataSource(applicationContext, uri)
             }
 
-            mediaPlayer!!.prepare()
-            mediaPlayer!!.isLooping = false
-            mediaPlayer!!.start()
-
-            // Auto-stop after 10 seconds
-            Handler(Looper.getMainLooper()).postDelayed({ stopAlertSound() }, 10_000L)
+            // prepare() là lệnh BLOCKING — có thể gây ANR nếu chạy trên main thread
+            // (handleLocationUpdate chạy trên Looper.getMainLooper()).
+            // Dùng prepareAsync() + listener để không chặn main thread.
+            mediaPlayer!!.setOnPreparedListener { mp ->
+                mp.isLooping = false
+                mp.start()
+                // Auto-stop sau 10 giây
+                Handler(Looper.getMainLooper()).postDelayed({ stopAlertSound() }, 10_000L)
+            }
+            mediaPlayer!!.setOnErrorListener { _, what, extra ->
+                Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
+                stopAlertSound()
+                true
+            }
+            mediaPlayer!!.prepareAsync()
 
         } catch (e: Exception) {
             Log.e(TAG, "Error playing sound: ${e.message}")
-            // Fallback: use Ringtone
+            // Fallback: dùng Ringtone (không cần prepare, an toàn hơn)
             try {
                 val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
                 val ringtone = RingtoneManager.getRingtone(applicationContext, uri)
@@ -274,21 +293,9 @@ class LocationTrackingService : Service() {
     }
 
     private fun showAlertNotification(distance: Float) {
-        val alertChannel = "alert_channel"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(
-                alertChannel, "Cảnh báo đến nơi",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                enableVibration(true)
-                enableLights(true)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            }
-            nm.createNotificationChannel(ch)
-        }
-
-        val notification = NotificationCompat.Builder(this, alertChannel)
+        // Channel được tạo 1 lần duy nhất trong createNotificationChannel() (onCreate),
+        // không cần tạo lại mỗi lần alert — tránh gọi createNotificationChannel() thừa
+        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_location_alert)
             .setContentTitle("🔔 ĐÃ ĐẾN NƠI!")
             .setContentText("Bạn cách đích ${distance.toInt()}m")
@@ -298,22 +305,35 @@ class LocationTrackingService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
 
-        nm.notify(1002, notification)
+        nm.notify(ALERT_NOTIFICATION_ID, notification)
     }
 
     // ── Notification Helpers ─────────────────────────────────────────────────
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Theo dõi vị trí",
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+            // Channel 1: thông báo theo dõi liên tục (foreground service)
+            val trackingChannel = NotificationChannel(
+                CHANNEL_ID, "Theo dõi vị trí",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Theo dõi vị trí GPS trong nền"
                 setShowBadge(false)
             }
-            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.createNotificationChannel(channel)
+
+            // Channel 2: cảnh báo khi đến nơi (ưu tiên cao, tạo 1 lần duy nhất)
+            val alertChannel = NotificationChannel(
+                ALERT_CHANNEL_ID, "Cảnh báo đến nơi",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                enableVibration(true)
+                enableLights(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+
+            nm.createNotificationChannel(trackingChannel)
+            nm.createNotificationChannel(alertChannel)
         }
     }
 

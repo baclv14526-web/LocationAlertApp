@@ -25,9 +25,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
 import com.locationalert.databinding.ActivityMainBinding
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -263,16 +261,6 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Thiết bị không hỗ trợ nhận dạng giọng nói", Toast.LENGTH_SHORT).show()
         }
     }
-    }
-
-    // ── OkHttp client dùng chung ─────────────────────────────────────────────
-    private val httpClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-            .build()
-    }
 
     // ── Geocoding ─────────────────────────────────────────────────────────────
     private fun geocodeAddress(address: String) {
@@ -286,10 +274,12 @@ class MainActivity : AppCompatActivity() {
                     .header("Accept",     "application/json")
                     .get().build()
 
-                httpClient.newCall(request).execute().use { response ->
+                NetworkClient.instance.newCall(request).execute().use { response ->
                     val body = response.body?.string() ?: ""
                     val json = org.json.JSONArray(body)
+                    if (isFinishing || isDestroyed) return@use
                     runOnUiThread {
+                        if (isFinishing || isDestroyed) return@runOnUiThread
                         if (json.length() > 0) {
                             val place = json.getJSONObject(0)
                             setTargetLocation(
@@ -303,7 +293,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread { binding.tvStatus.text = "❌ Lỗi kết nối: ${e.message}" }
+                if (isFinishing || isDestroyed) return@Thread
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) binding.tvStatus.text = "❌ Lỗi kết nối: ${e.message}"
+                }
             }
         }.start()
     }
@@ -370,7 +363,11 @@ class MainActivity : AppCompatActivity() {
                 currentLat, currentLon,
                 target.first, target.second
             )
+            // Tránh crash/leak nếu Activity đã bị destroy hoặc dialog đã đóng
+            // trong lúc network call đang chạy (có thể mất tới ~40s)
+            if (isFinishing || isDestroyed || !dialog.isShowing) return@Thread
             runOnUiThread {
+                if (isFinishing || isDestroyed || !dialog.isShowing) return@runOnUiThread
                 layoutLoading.visibility = View.GONE
 
                 if (result.error != null) {
