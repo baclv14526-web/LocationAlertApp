@@ -145,10 +145,14 @@ object RouteHelper {
     // ── Instruction → tiếng Việt ──────────────────────────────────────────────
     private fun buildInstruction(type: String, modifier: String, name: String): String {
         val dir = when (modifier) {
-            "left"         -> "trái";  "right"        -> "phải"
-            "slight left"  -> "nhẹ trái"; "slight right" -> "nhẹ phải"
-            "sharp left"   -> "gấp trái"; "sharp right"  -> "gấp phải"
-            "uturn"        -> "quay đầu"; "straight"     -> "thẳng"
+            "left"         -> "trái"
+            "right"        -> "phải"
+            "slight left"  -> "nhẹ trái"
+            "slight right" -> "nhẹ phải"
+            "sharp left"   -> "gấp trái"
+            "sharp right"  -> "gấp phải"
+            "uturn"        -> "quay đầu"
+            "straight"     -> "thẳng"
             else           -> ""
         }
         return when (type) {
