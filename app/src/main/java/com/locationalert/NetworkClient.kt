@@ -1,34 +1,74 @@
 package com.locationalert
 
+import android.util.Log
 import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import okhttp3.TlsVersion
+import java.security.KeyStore
+import java.security.SecureRandom
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 
 /**
  * OkHttpClient singleton dùng chung toàn app.
- * Trước đây MainActivity và RouteHelper mỗi nơi tự tạo 1 client riêng,
- * lãng phí connection pool + thread pool. Gộp lại thành 1 instance duy nhất.
  *
- * Cấu hình TLS 3 lớp (fallback dần) để tương thích tốt với Android 9 (API 28):
- *   1. MODERN_TLS   — TLS 1.3 / 1.2, cipher mạnh (ưu tiên)
- *   2. COMPATIBLE_TLS — TLS cũ hơn, cipher rộng hơn (fallback)
- *   3. CLEARTEXT    — chỉ dùng nếu network_security_config cho phép (không áp dụng ở đây)
+ * Fix SSL handshake trên Android 9 (API 28):
+ *   1. Conscrypt được cài làm Security Provider ưu tiên cao nhất trong
+ *      LocationAlertApp.onCreate() — đây là fix chính, thay thế TLS stack
+ *      cũ/lỗi của OS bằng implementation đầy đủ của Google.
+ *   2. SSLContext ở đây được khởi tạo TƯỜNG MINH bằng SSLContext.getInstance("TLS"),
+ *      để đảm bảo nó thực sự lấy Conscrypt provider (vừa được insert ở vị trí 1)
+ *      thay vì cache provider cũ từ trước khi Conscrypt được cài.
+ *   3. ConnectionSpec 2 lớp (MODERN_TLS → COMPATIBLE_TLS) vẫn giữ để dự phòng
+ *      trường hợp Conscrypt cài thất bại.
  */
 object NetworkClient {
 
-    val instance: OkHttpClient by lazy {
+    private const val TAG = "NetworkClient"
+
+    val instance: OkHttpClient by lazy { buildClient() }
+
+    private fun buildClient(): OkHttpClient {
         val modernSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
             .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
             .allEnabledCipherSuites()
             .build()
 
-        OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .connectionSpecs(listOf(modernSpec, ConnectionSpec.COMPATIBLE_TLS))
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .writeTimeout(20, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
-            .build()
+
+        // Khởi tạo SSLContext tường minh — lấy đúng Conscrypt provider
+        // (đã được insert ở vị trí ưu tiên cao nhất trong LocationAlertApp)
+        try {
+            val trustManagerFactory = TrustManagerFactory.getInstance(
+                TrustManagerFactory.getDefaultAlgorithm()
+            )
+            trustManagerFactory.init(null as KeyStore?)
+            val trustManagers = trustManagerFactory.trustManagers
+            val x509TrustManager = trustManagers.firstOrNull { it is X509TrustManager }
+                as? X509TrustManager
+
+            if (x509TrustManager != null) {
+                // "TLS" (không ghi version cụ thể) để SSLContext tự chọn
+                // provider có sẵn tốt nhất — chính là Conscrypt sau khi cài
+                val sslContext = SSLContext.getInstance("TLS")
+                sslContext.init(null, arrayOf(x509TrustManager), SecureRandom())
+                builder.sslSocketFactory(sslContext.socketFactory, x509TrustManager)
+                Log.i(TAG, "Custom SSLContext initialized (provider: ${sslContext.provider.name})")
+            }
+        } catch (e: Exception) {
+            // Nếu lỗi, OkHttp vẫn dùng SSLContext mặc định của hệ thống —
+            // Conscrypt (nếu cài thành công) vẫn có hiệu lực vì nó được
+            // insert ở cấp Security Provider toàn hệ thống, không chỉ ở đây.
+            Log.w(TAG, "Custom SSLContext setup failed, falling back to system default: ${e.message}")
+        }
+
+        return builder.build()
     }
 }
