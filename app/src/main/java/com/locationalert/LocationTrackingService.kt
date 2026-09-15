@@ -295,6 +295,7 @@ class LocationTrackingService : Service() {
     private fun showAlertNotification(distance: Float) {
         // Channel được tạo 1 lần duy nhất trong createNotificationChannel() (onCreate),
         // không cần tạo lại mỗi lần alert — tránh gọi createNotificationChannel() thừa
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_location_alert)
             .setContentTitle("🔔 ĐÃ ĐẾN NƠI!")
