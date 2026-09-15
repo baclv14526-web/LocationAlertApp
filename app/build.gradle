@@ -64,4 +64,7 @@ dependencies {
     implementation 'androidx.activity:activity-ktx:1.8.2'
     implementation 'androidx.fragment:fragment-ktx:1.6.2'
     implementation 'com.google.code.gson:gson:2.10.1'
+
+    // OkHttp — xử lý TLS/SSL tốt hơn URLConnection trên Android 9
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }

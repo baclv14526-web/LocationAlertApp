@@ -25,10 +25,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
 import com.locationalert.databinding.ActivityMainBinding
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManagerFactory
-import java.security.KeyStore
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -264,14 +263,15 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Thiết bị không hỗ trợ nhận dạng giọng nói", Toast.LENGTH_SHORT).show()
         }
     }
+    }
 
-    // ── SSL helper (fix Android 9 TLS handshake) ────────────────────────────────
-    private fun buildSslContext(): SSLContext {
-        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        tmf.init(null as KeyStore?)
-        return SSLContext.getInstance("TLSv1.2").also {
-            it.init(null, tmf.trustManagers, null)
-        }
+    // ── OkHttp client dùng chung ─────────────────────────────────────────────
+    private val httpClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
     }
 
     // ── Geocoding ─────────────────────────────────────────────────────────────
@@ -280,27 +280,26 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val encoded = Uri.encode(address)
-                val url  = java.net.URL(
-                    "https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=1&accept-language=vi"
-                )
-                val conn = (url.openConnection() as HttpsURLConnection).apply {
-                    sslSocketFactory = buildSslContext().socketFactory
-                    setRequestProperty("User-Agent", "LocationAlertApp/1.0 Android")
-                    setRequestProperty("Accept", "application/json")
-                    connectTimeout = 20_000; readTimeout = 20_000
-                    instanceFollowRedirects = true
-                }
-                val json = org.json.JSONArray(conn.inputStream.bufferedReader().readText())
-                runOnUiThread {
-                    if (json.length() > 0) {
-                        val place = json.getJSONObject(0)
-                        setTargetLocation(
-                            place.getString("lat").toDouble(),
-                            place.getString("lon").toDouble(),
-                            place.getString("display_name")
-                        )
-                    } else {
-                        binding.tvStatus.text = "❌ Không tìm thấy địa chỉ. Thử nhập tọa độ thủ công."
+                val request = Request.Builder()
+                    .url("https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=1&accept-language=vi")
+                    .header("User-Agent", "LocationAlertApp/1.0 Android")
+                    .header("Accept",     "application/json")
+                    .get().build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: ""
+                    val json = org.json.JSONArray(body)
+                    runOnUiThread {
+                        if (json.length() > 0) {
+                            val place = json.getJSONObject(0)
+                            setTargetLocation(
+                                place.getString("lat").toDouble(),
+                                place.getString("lon").toDouble(),
+                                place.getString("display_name")
+                            )
+                        } else {
+                            binding.tvStatus.text = "❌ Không tìm thấy địa chỉ. Thử nhập tọa độ thủ công."
+                        }
                     }
                 }
             } catch (e: Exception) {

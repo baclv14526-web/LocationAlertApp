@@ -1,29 +1,51 @@
 package com.locationalert
 
+import android.util.Log
+import okhttp3.ConnectionSpec
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.TlsVersion
 import org.json.JSONObject
-import java.net.URL
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManagerFactory
-import java.security.KeyStore
+import java.util.concurrent.TimeUnit
 
 /**
- * Lấy danh sách tên đường từ vị trí hiện tại → đích đến
- * Primary  : OSRM public API  (router.project-osrm.org)
- * Fallback : OSRM DE mirror   (routing.openstreetmap.de)
+ * Routing helper dùng OkHttp — xử lý TLS đúng trên Android 9 (API 28).
  *
- * Fix TLS handshake failed trên Android 9 (API 28):
- *  - Khởi tạo SSLContext tường minh với TrustManager hệ thống
- *  - Retry tự động sang mirror khi primary lỗi
+ * Chiến lược endpoint:
+ *   1. OSRM public   (router.project-osrm.org)
+ *   2. OSRM DE mirror (routing.openstreetmap.de)
+ *
+ * OkHttp tự động:
+ *   - Negotiate TLS 1.2 / 1.3 phù hợp với từng server
+ *   - Retry khi connection reset
+ *   - Không bị vấn đề SSLHandshakeException như URLConnection
  */
 object RouteHelper {
 
-    // ── Endpoints (primary + fallback) ───────────────────────────────────────
-    private val OSRM_ENDPOINTS = listOf(
+    private const val TAG = "RouteHelper"
+
+    // ── OkHttpClient dùng chung (singleton, thread-safe) ─────────────────────
+    private val client: OkHttpClient by lazy {
+        val spec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+            .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
+            .allEnabledCipherSuites()
+            .build()
+
+        OkHttpClient.Builder()
+            .connectionSpecs(listOf(spec, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+
+    private val ENDPOINTS = listOf(
         "https://router.project-osrm.org/route/v1/driving/",
         "https://routing.openstreetmap.de/routed-car/route/v1/driving/"
     )
 
+    // ── Data classes ──────────────────────────────────────────────────────────
     data class RouteStep(
         val streetName: String,
         val instruction: String,
@@ -39,15 +61,6 @@ object RouteHelper {
         val error: String? = null
     )
 
-    // ── SSLContext cố định cho Android 9 ─────────────────────────────────────
-    private fun buildSslContext(): SSLContext {
-        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        tmf.init(null as KeyStore?)                 // dùng system trust store
-        return SSLContext.getInstance("TLSv1.2").also {
-            it.init(null, tmf.trustManagers, null)
-        }
-    }
-
     // ── Public API ────────────────────────────────────────────────────────────
     fun fetchRoute(
         fromLat: Double, fromLon: Double,
@@ -55,53 +68,53 @@ object RouteHelper {
     ): RouteResult {
         val coords = "$fromLon,$fromLat;$toLon,$toLat"
         val params = "?steps=true&annotations=false&overview=false"
-        var lastError = "Không có kết nối"
+        val errors = mutableListOf<String>()
 
-        // Thử lần lượt từng endpoint
-        for (base in OSRM_ENDPOINTS) {
+        for (base in ENDPOINTS) {
+            val url = "$base$coords$params"
+            Log.d(TAG, "Trying endpoint: $url")
             try {
-                val result = fetchFromEndpoint("$base$coords$params")
-                if (result.error == null) return result   // thành công
-                lastError = result.error
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "LocationAlertApp/1.0 Android")
+                    .header("Accept",     "application/json")
+                    .get()
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    Log.d(TAG, "HTTP ${response.code} from ${base.host()}")
+                    if (!response.isSuccessful) {
+                        errors += "HTTP ${response.code} từ ${base.host()}"
+                        return@use
+                    }
+                    val body = response.body?.string()
+                    if (body.isNullOrBlank()) {
+                        errors += "Phản hồi rỗng từ ${base.host()}"
+                        return@use
+                    }
+                    val result = parseOsrm(body)
+                    if (result.error == null) {
+                        Log.d(TAG, "OK — ${result.steps.size} steps, ${result.totalDistanceM}m")
+                        return result          // ← thành công, trả về ngay
+                    }
+                    errors += result.error
+                }
             } catch (e: Exception) {
-                lastError = simplifyError(e)
-                // Tiếp tục thử endpoint tiếp theo
+                val msg = friendlyError(e, base.host())
+                Log.e(TAG, msg, e)
+                errors += msg
             }
         }
 
-        return RouteResult(emptyList(), 0, 0, lastError)
+        return RouteResult(emptyList(), 0, 0, errors.joinToString("\n"))
     }
 
-    // ── Internal fetch ────────────────────────────────────────────────────────
-    private fun fetchFromEndpoint(urlStr: String): RouteResult {
-        val url  = URL(urlStr)
-        val conn = (url.openConnection() as HttpsURLConnection).apply {
-            // Fix TLS handshake trên Android 9
-            sslSocketFactory = buildSslContext().socketFactory
-            setRequestProperty("User-Agent", "LocationAlertApp/1.0 Android")
-            setRequestProperty("Accept",     "application/json")
-            connectTimeout = 20_000
-            readTimeout    = 20_000
-            requestMethod  = "GET"
-            instanceFollowRedirects = true
-        }
-
-        val code = conn.responseCode
-        if (code != 200) {
-            return RouteResult(emptyList(), 0, 0, "Server lỗi: HTTP $code")
-        }
-
-        val body = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-        return parseOsrmResponse(body)
-    }
-
-    // ── Parser ────────────────────────────────────────────────────────────────
-    private fun parseOsrmResponse(json: String): RouteResult {
+    // ── Parse OSRM JSON ───────────────────────────────────────────────────────
+    private fun parseOsrm(json: String): RouteResult {
         val root = JSONObject(json)
-        if (root.optString("code") != "Ok") {
-            val msg = root.optString("message", "Không tìm được đường")
-            return RouteResult(emptyList(), 0, 0, msg)
-        }
+        if (root.optString("code") != "Ok")
+            return RouteResult(emptyList(), 0, 0,
+                root.optString("message", "Không tìm được đường đi"))
 
         val route     = root.getJSONArray("routes").getJSONObject(0)
         val totalDist = route.optInt("distance", 0)
@@ -112,49 +125,31 @@ object RouteHelper {
         for (li in 0 until legs.length()) {
             val legSteps = legs.getJSONObject(li).getJSONArray("steps")
             for (si in 0 until legSteps.length()) {
-                val step      = legSteps.getJSONObject(si)
-                val name      = step.optString("name", "").trim()
-                val distM     = step.optDouble("distance", 0.0).toInt()
-                val maneuver  = step.optJSONObject("maneuver")
-                val mType     = maneuver?.optString("type", "")     ?: ""
-                val mModifier = maneuver?.optString("modifier", "") ?: ""
-
-                steps.add(RouteStep(
-                    streetName  = name,
-                    instruction = buildInstruction(mType, mModifier, name),
-                    distanceM   = distM,
-                    maneuver    = mType,
-                    modifier    = mModifier
-                ))
+                val s   = legSteps.getJSONObject(si)
+                val man = s.optJSONObject("maneuver")
+                val typ = man?.optString("type", "")     ?: ""
+                val mod = man?.optString("modifier", "") ?: ""
+                val nm  = s.optString("name", "").trim()
+                steps += RouteStep(
+                    streetName  = nm,
+                    instruction = buildInstruction(typ, mod, nm),
+                    distanceM   = s.optDouble("distance", 0.0).toInt(),
+                    maneuver    = typ,
+                    modifier    = mod
+                )
             }
         }
-
         return RouteResult(steps, totalDist, totalDur)
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-    private fun simplifyError(e: Exception): String {
-        val msg = e.message ?: e.javaClass.simpleName
-        return when {
-            msg.contains("handshake", ignoreCase = true)  -> "Lỗi bảo mật SSL (handshake) — thử lại"
-            msg.contains("timeout",   ignoreCase = true)  -> "Quá thời gian chờ — kiểm tra mạng"
-            msg.contains("host",      ignoreCase = true)  -> "Không kết nối được server"
-            msg.contains("network",   ignoreCase = true)  -> "Không có kết nối mạng"
-            else -> "Lỗi: $msg"
-        }
-    }
-
+    // ── Instruction → tiếng Việt ──────────────────────────────────────────────
     private fun buildInstruction(type: String, modifier: String, name: String): String {
         val dir = when (modifier) {
-            "left"        -> "trái"
-            "right"       -> "phải"
-            "slight left" -> "nhẹ trái"
-            "slight right"-> "nhẹ phải"
-            "sharp left"  -> "gấp trái"
-            "sharp right" -> "gấp phải"
-            "uturn"       -> "quay đầu"
-            "straight"    -> "thẳng"
-            else          -> ""
+            "left"         -> "trái";  "right"        -> "phải"
+            "slight left"  -> "nhẹ trái"; "slight right" -> "nhẹ phải"
+            "sharp left"   -> "gấp trái"; "sharp right"  -> "gấp phải"
+            "uturn"        -> "quay đầu"; "straight"     -> "thẳng"
+            else           -> ""
         }
         return when (type) {
             "depart"          -> if (name.isNotEmpty()) "Xuất phát từ $name" else "Xuất phát"
@@ -167,12 +162,22 @@ object RouteHelper {
             "off ramp"        -> if (dir.isNotEmpty())  "Ra đường $dir"     else "Ra đường"
             "fork"            -> if (dir.isNotEmpty())  "Đi $dir tại ngã rẽ" else "Tại ngã rẽ"
             "end of road"     -> if (dir.isNotEmpty())  "Rẽ $dir cuối đường" else "Cuối đường"
-            "roundabout",
-            "rotary"          -> "Vào vòng xuyến"
+            "roundabout","rotary" -> "Vào vòng xuyến"
             "roundabout turn" -> if (dir.isNotEmpty())  "Trong vòng xuyến, rẽ $dir" else "Trong vòng xuyến"
             "use lane"        -> "Giữ làn đường"
             else              -> if (dir.isNotEmpty())  "Đi $dir"           else "Tiếp tục"
         }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    private fun String.host() = removePrefix("https://").substringBefore("/")
+
+    private fun friendlyError(e: Exception, host: String): String = when (e) {
+        is javax.net.ssl.SSLException       -> "SSL lỗi ($host): ${e.message}"
+        is java.net.SocketTimeoutException  -> "Timeout ($host) — kiểm tra mạng"
+        is java.net.UnknownHostException    -> "Không có mạng / DNS lỗi"
+        is java.io.IOException              -> "Mạng lỗi ($host): ${e.message}"
+        else                               -> "${e.javaClass.simpleName}: ${e.message}"
     }
 
     fun formatDistance(meters: Int): String = when {
@@ -191,13 +196,13 @@ object RouteHelper {
     }
 
     fun maneuverIcon(maneuver: String, modifier: String): String = when {
-        maneuver == "depart"                        -> "🚦"
-        maneuver == "arrive"                        -> "🏁"
+        maneuver == "depart"                             -> "🚦"
+        maneuver == "arrive"                             -> "🏁"
         maneuver == "roundabout" || maneuver == "rotary" -> "🔄"
-        modifier.contains("left")                   -> "↰"
-        modifier.contains("right")                  -> "↱"
-        modifier == "uturn"                         -> "↩"
+        modifier.contains("left")                        -> "↰"
+        modifier.contains("right")                       -> "↱"
+        modifier == "uturn"                              -> "↩"
         modifier == "straight" || maneuver == "continue" -> "↑"
-        else                                        -> "➤"
+        else                                             -> "➤"
     }
 }
