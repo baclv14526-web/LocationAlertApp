@@ -26,6 +26,9 @@ import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
 import com.locationalert.databinding.ActivityMainBinding
 import okhttp3.Request
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,6 +41,12 @@ class MainActivity : AppCompatActivity() {
     // Vị trí hiện tại (cập nhật realtime từ service)
     private var currentLat = 0.0
     private var currentLon = 0.0
+
+    // Thread pool dùng chung cho các tác vụ network (geocoding, routing) thay vì
+    // tạo Thread mới mỗi lần — tránh chi phí tạo/hủy Thread liên tục và cho phép
+    // hủy tác vụ đang chạy khi Activity bị destroy.
+    private val backgroundExecutor: ExecutorService = Executors.newCachedThreadPool()
+    private var pendingRouteFetch: Future<*>? = null
 
     // ── Permissions ──────────────────────────────────────────────────────────
     private val requiredPermissions = mutableListOf(
@@ -166,7 +175,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Gỡ callback trước khi unbind — Service vẫn chạy nền (START_STICKY),
+        // nếu không gỡ, nó sẽ giữ tham chiếu tới Activity instance đã destroy
+        // (leak) và có thể gọi runOnUiThread trên Activity đã chết khi có
+        // location update tiếp theo.
+        trackingService?.setCallback(null)
         if (isBound) { unbindService(serviceConnection); isBound = false }
+        pendingRouteFetch?.cancel(true)
+        backgroundExecutor.shutdownNow()
     }
 
     // ── Setup UI ──────────────────────────────────────────────────────────────
@@ -183,6 +199,7 @@ class MainActivity : AppCompatActivity() {
             binding.tvStatus.text = "Chưa đặt vị trí đích"
             binding.tvStatus.setTextColor(getColor(R.color.text_secondary))
             trackingService?.clearTarget()
+            PrefsHelper.clearTarget(this)
             updateTrackingUI(false)
             updateRouteButtonVisibility()
         }
@@ -265,7 +282,7 @@ class MainActivity : AppCompatActivity() {
     // ── Geocoding ─────────────────────────────────────────────────────────────
     private fun geocodeAddress(address: String) {
         binding.tvStatus.text = "🔍 Đang tìm địa chỉ..."
-        Thread {
+        backgroundExecutor.submit geocode@{
             try {
                 val encoded = Uri.encode(address)
                 val request = Request.Builder()
@@ -293,12 +310,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                if (isFinishing || isDestroyed) return@Thread
+                if (isFinishing || isDestroyed) return@geocode
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) binding.tvStatus.text = "❌ Lỗi kết nối: ${e.message}"
                 }
             }
-        }.start()
+        }
     }
 
     private fun setTargetLocation(lat: Double, lon: Double, name: String) {
@@ -355,17 +372,21 @@ class MainActivity : AppCompatActivity() {
             .setView(dialogView)
             .setPositiveButton("Đóng", null)
             .create()
+
+        // Hủy fetch đang chạy nếu người dùng đóng dialog sớm (back, tap ngoài,
+        // hoặc bấm "Đóng") — tránh network call chạy tiếp vô ích tới 40s
+        dialog.setOnDismissListener { pendingRouteFetch?.cancel(true) }
         dialog.show()
 
-        // Fetch route trên background thread
-        Thread {
+        // Fetch route trên thread pool dùng chung (thay vì tạo Thread riêng mỗi lần)
+        pendingRouteFetch = backgroundExecutor.submit routeFetch@{
             val result = RouteHelper.fetchRoute(
                 currentLat, currentLon,
                 target.first, target.second
             )
             // Tránh crash/leak nếu Activity đã bị destroy hoặc dialog đã đóng
             // trong lúc network call đang chạy (có thể mất tới ~40s)
-            if (isFinishing || isDestroyed || !dialog.isShowing) return@Thread
+            if (isFinishing || isDestroyed || !dialog.isShowing) return@routeFetch
             runOnUiThread {
                 if (isFinishing || isDestroyed || !dialog.isShowing) return@runOnUiThread
                 layoutLoading.visibility = View.GONE
@@ -452,7 +473,7 @@ class MainActivity : AppCompatActivity() {
 
                 scrollSteps.visibility = View.VISIBLE
             }
-        }.start()
+        }
     }
 
     /** Trích modifier từ instruction đã dịch để xác định icon */
@@ -504,8 +525,29 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Vui lòng đặt vị trí đích trước", Toast.LENGTH_SHORT).show(); return
         }
         if (!hasLocationPermission()) { checkAndRequestPermissions(); return }
+        if (!isLocationServiceEnabled()) {
+            AlertDialog.Builder(this)
+                .setTitle("Định vị đang tắt")
+                .setMessage("Vui lòng bật GPS hoặc dịch vụ vị trí để ứng dụng có thể theo dõi.")
+                .setPositiveButton("Mở cài đặt") { _, _ ->
+                    startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                }
+                .setNegativeButton("Hủy", null)
+                .show()
+            return
+        }
         trackingService!!.startTracking()
         updateTrackingUI(true)
+    }
+
+    /** Kiểm tra Location Services (GPS/Network) có đang bật ở cấp hệ thống không.
+     *  Trước đây thiếu check này → nếu người dùng tắt định vị hoàn toàn,
+     *  "Đang theo dõi..." hiển thị mãi mà không bao giờ có update, không có
+     *  phản hồi gì cho người dùng biết lý do. */
+    private fun isLocationServiceEnabled(): Boolean {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        return lm.isProviderEnabled(android.location.LocationManager.GPS_PROVIDER) ||
+               lm.isProviderEnabled(android.location.LocationManager.NETWORK_PROVIDER)
     }
 
     private fun stopTracking() {

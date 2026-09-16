@@ -98,6 +98,9 @@ object RouteHelper {
                 val msg = friendlyError(e, base.host())
                 Log.e(TAG, msg, e)
                 errors += msg
+                // Không có mạng ở cấp hệ thống — thử endpoint khác cũng sẽ
+                // fail với lý do giống hệt, lãng phí thêm tới 20s timeout.
+                if (e is java.net.UnknownHostException) break
             }
         }
 

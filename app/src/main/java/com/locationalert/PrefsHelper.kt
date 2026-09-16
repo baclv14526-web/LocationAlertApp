@@ -36,4 +36,13 @@ object PrefsHelper {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getFloat(KEY_RADIUS, LocationTrackingService.DEFAULT_RADIUS)
     }
+
+    /** Xóa vị trí đích đã lưu — dùng khi người dùng nhấn nút Xóa để nhập lại. */
+    fun clearTarget(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove(KEY_LAT)
+            .remove(KEY_LON)
+            .remove(KEY_NAME)
+            .apply()
+    }
 }

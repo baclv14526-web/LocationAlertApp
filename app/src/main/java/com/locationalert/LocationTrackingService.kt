@@ -87,14 +87,16 @@ class LocationTrackingService : Service() {
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
-    fun setCallback(cb: TrackingCallback) { callback = cb }
+    fun setCallback(cb: TrackingCallback?) { callback = cb }
 
     fun setTarget(lat: Double, lon: Double) {
         targetLat = lat
         targetLon = lon
         hasTarget = true
         alertTriggered = false
-        PrefsHelper.saveTarget(this, lat, lon, "")
+        // Không lưu Prefs ở đây — MainActivity chịu trách nhiệm lưu (có tên đầy đủ).
+        // Trước đây gọi saveTarget(..., "") ở đây đã xóa mất tên đã lưu mỗi khi
+        // restoreServiceState() gọi lại setTarget() lúc khởi động app.
     }
 
     fun clearTarget() {
