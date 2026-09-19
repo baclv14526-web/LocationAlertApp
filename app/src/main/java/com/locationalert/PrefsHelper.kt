@@ -45,4 +45,19 @@ object PrefsHelper {
             .remove(KEY_NAME)
             .apply()
     }
+
+    private const val KEY_BG_LOCATION_DISMISSED = "bg_location_dialog_dismissed"
+
+    /** Đánh dấu người dùng đã bấm "Bỏ qua" dialog xin quyền vị trí nền —
+     *  tránh hỏi lại mỗi lần mở app (nagging). */
+    fun setBackgroundLocationDialogDismissed(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_BG_LOCATION_DISMISSED, true)
+            .apply()
+    }
+
+    fun wasBackgroundLocationDialogDismissed(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_BG_LOCATION_DISMISSED, false)
+    }
 }

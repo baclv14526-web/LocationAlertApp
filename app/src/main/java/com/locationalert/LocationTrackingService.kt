@@ -108,8 +108,11 @@ class LocationTrackingService : Service() {
 
     fun setMp3Uri(uri: Uri?) {
         mp3Uri = uri
-        mediaPlayer?.release()
-        mediaPlayer = null
+        // Dùng lại stopAlertSound() thay vì release() trực tiếp — đã có
+        // try/catch và kiểm tra isPlaying, tránh crash nếu player đang
+        // ở trạng thái bất thường khi người dùng đổi MP3 giữa lúc alert
+        // đang phát.
+        stopAlertSound()
     }
 
     fun setAlertRadius(radius: Float) {
@@ -126,6 +129,7 @@ class LocationTrackingService : Service() {
         if (isTracking) return
         isTracking = true
         alertTriggered = false
+        lastNotificationText = null   // đảm bảo notification đầu tiên luôn hiện
         setupLocationUpdates()
         updateNotification("📡 Đang theo dõi vị trí...")
     }
@@ -135,6 +139,7 @@ class LocationTrackingService : Service() {
         locationCallback?.let { fusedLocationClient?.removeLocationUpdates(it) }
         locationCallback = null
         stopAlertSound()
+        lastNotificationText = null
         updateNotification("⏹ Đã dừng theo dõi")
     }
 
@@ -238,37 +243,48 @@ class LocationTrackingService : Service() {
     private fun playSoundAlert() {
         try {
             stopAlertSound()
-            mediaPlayer = MediaPlayer()
+            val player = MediaPlayer()
+            mediaPlayer = player
             val audioAttr = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ALARM)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
-            mediaPlayer!!.setAudioAttributes(audioAttr)
+            player.setAudioAttributes(audioAttr)
 
             if (mp3Uri != null) {
-                mediaPlayer!!.setDataSource(applicationContext, mp3Uri!!)
+                player.setDataSource(applicationContext, mp3Uri!!)
             } else {
                 // Default alarm sound
                 val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                     ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                mediaPlayer!!.setDataSource(applicationContext, uri)
+                player.setDataSource(applicationContext, uri)
             }
 
             // prepare() là lệnh BLOCKING — có thể gây ANR nếu chạy trên main thread
             // (handleLocationUpdate chạy trên Looper.getMainLooper()).
             // Dùng prepareAsync() + listener để không chặn main thread.
-            mediaPlayer!!.setOnPreparedListener { mp ->
+            //
+            // Race condition fix: callback async có thể fire SAU KHI mediaPlayer đã
+            // bị stopAlertSound()/release() bởi 1 lần triggerAlert() hoặc setMp3Uri()
+            // khác xảy ra trong lúc đang prepare (ví dụ user đổi MP3 giữa lúc alert
+            // đang chuẩn bị phát). Kiểm tra `mediaPlayer === player` (đúng instance
+            // hiện tại) trước khi gọi start()/release() để tránh
+            // IllegalStateException trên object đã bị release.
+            player.setOnPreparedListener { mp ->
+                if (mediaPlayer !== mp) return@setOnPreparedListener
                 mp.isLooping = false
                 mp.start()
                 // Auto-stop sau 10 giây
-                Handler(Looper.getMainLooper()).postDelayed({ stopAlertSound() }, 10_000L)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (mediaPlayer === mp) stopAlertSound()
+                }, 10_000L)
             }
-            mediaPlayer!!.setOnErrorListener { _, what, extra ->
+            player.setOnErrorListener { mp, what, extra ->
                 Log.e(TAG, "MediaPlayer error: what=$what extra=$extra")
-                stopAlertSound()
+                if (mediaPlayer === mp) stopAlertSound()
                 true
             }
-            mediaPlayer!!.prepareAsync()
+            player.prepareAsync()
 
         } catch (e: Exception) {
             Log.e(TAG, "Error playing sound: ${e.message}")
@@ -356,7 +372,13 @@ class LocationTrackingService : Service() {
             .build()
     }
 
+    private var lastNotificationText: String? = null
+
     private fun updateNotification(text: String) {
+        // Tránh gọi notify() liên tục khi text không đổi (location update xảy ra
+        // mỗi 1.5-3s khi di chuyển) — giảm system call và tiết kiệm pin/CPU.
+        if (text == lastNotificationText) return
+        lastNotificationText = text
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text))
     }
@@ -364,7 +386,9 @@ class LocationTrackingService : Service() {
     private fun buildNotificationText(distance: Float): String {
         val dist = distance.toInt()
         return when {
-            dist <= 30 -> "⚠️ Gần đích! Còn ${dist}m"
+            // Dùng alertRadius thực tế (do người dùng cấu hình, 20-300m) thay vì
+            // ngưỡng cứng 30 — trước đây không khớp khi người dùng chọn radius lớn hơn
+            dist <= alertRadius -> "⚠️ Gần đích! Còn ${dist}m"
             dist < 1000 -> "📍 Còn ${dist}m đến đích"
             else -> "📍 Còn ${"%.1f".format(dist / 1000f)}km đến đích"
         }

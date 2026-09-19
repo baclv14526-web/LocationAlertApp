@@ -252,7 +252,8 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
             ContextCompat.checkSelfPermission(
                 this, Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
+            ) != PackageManager.PERMISSION_GRANTED &&
+            !PrefsHelper.wasBackgroundLocationDialogDismissed(this)
         ) {
             AlertDialog.Builder(this)
                 .setTitle("Quyền vị trí nền")
@@ -260,7 +261,10 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("Cài đặt") { _, _ ->
                     backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
                 }
-                .setNegativeButton("Bỏ qua", null)
+                .setNegativeButton("Bỏ qua") { _, _ ->
+                    // Nhớ lựa chọn này — tránh hỏi lại mỗi lần mở app (nagging)
+                    PrefsHelper.setBackgroundLocationDialogDismissed(this)
+                }
                 .show()
         }
     }
