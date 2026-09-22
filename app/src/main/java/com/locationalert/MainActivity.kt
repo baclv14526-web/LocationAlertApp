@@ -15,7 +15,6 @@ import android.provider.OpenableColumns
 import android.speech.RecognizerIntent
 import android.view.LayoutInflater
 import android.view.View
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -125,6 +124,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Cache màu sắc — tránh gọi getColor() (resource lookup) mỗi lần
+    // onDistanceUpdate() chạy (có thể mỗi 1.5s khi đang di chuyển)
+    private val colorAlertRed by lazy { getColor(R.color.alert_red) }
+    private val colorAlertOrange by lazy { getColor(R.color.alert_orange) }
+    private val colorAlertYellow by lazy { getColor(R.color.alert_yellow) }
+    private val colorTextPrimary by lazy { getColor(R.color.text_primary) }
+    private var lastDistanceColor: Int? = null
+
     // ── Service Callback ──────────────────────────────────────────────────────
     private val serviceCallback = object : LocationTrackingService.TrackingCallback {
         override fun onLocationUpdate(lat: Double, lon: Double, accuracy: Float, provider: String) {
@@ -146,12 +153,19 @@ class MainActivity : AppCompatActivity() {
                     dist < 1000 -> "Khoảng cách: ${dist}m"
                     else        -> "Khoảng cách: ${"%.1f".format(dist / 1000f)}km"
                 }
-                binding.tvDistance.setTextColor(when {
-                    dist <= 20  -> getColor(R.color.alert_red)
-                    dist <= 50  -> getColor(R.color.alert_orange)
-                    dist <= 200 -> getColor(R.color.alert_yellow)
-                    else        -> getColor(R.color.text_primary)
-                })
+                val newColor = when {
+                    dist <= 20  -> colorAlertRed
+                    dist <= 50  -> colorAlertOrange
+                    dist <= 200 -> colorAlertYellow
+                    else        -> colorTextPrimary
+                }
+                // Chỉ setTextColor khi màu thực sự đổi — tránh redraw thừa khi
+                // khoảng cách thay đổi nhỏ trong cùng 1 khung màu (vd 45m→44m
+                // vẫn cùng "orange", không cần invalidate view)
+                if (newColor != lastDistanceColor) {
+                    binding.tvDistance.setTextColor(newColor)
+                    lastDistanceColor = newColor
+                }
             }
         }
 
@@ -368,8 +382,11 @@ class MainActivity : AppCompatActivity() {
         val tvStepCount    = dialogView.findViewById<TextView>(R.id.tvRouteStepCount)
         val layoutLoading  = dialogView.findViewById<View>(R.id.layoutRouteLoading)
         val tvError        = dialogView.findViewById<TextView>(R.id.tvRouteError)
-        val scrollSteps    = dialogView.findViewById<View>(R.id.scrollRouteSteps)
-        val layoutSteps    = dialogView.findViewById<LinearLayout>(R.id.layoutRouteSteps)
+        val recyclerSteps  = dialogView.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.scrollRouteSteps)
+        recyclerSteps.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
+        // Kích thước item cố định (không đổi theo nội dung) — cho phép
+        // RecyclerView tối ưu layout pass, giảm CPU khi scroll
+        recyclerSteps.setHasFixedSize(false)
 
         val dialog = AlertDialog.Builder(this, R.style.RouteDialogTheme)
             .setTitle("🗺️ Danh sách đường đi")
@@ -417,65 +434,20 @@ class MainActivity : AppCompatActivity() {
                     return@runOnUiThread
                 }
 
-                // Render từng bước
-                layoutSteps.removeAllViews()
-                val inflater = LayoutInflater.from(this)
-                meaningfulSteps.forEachIndexed { index, step ->
-                    val itemView = inflater.inflate(R.layout.item_route_step, layoutSteps, false)
+                // RecyclerView + Adapter: chỉ inflate số item hiển thị trên màn
+                // hình (thường 5-8) thay vì toàn bộ route, view được tái sử
+                // dụng khi scroll — giảm đáng kể thời gian mở dialog và bộ
+                // nhớ dùng cho route dài (đường cao tốc, hành trình liên tỉnh).
+                recyclerSteps.adapter = RouteStepAdapter(
+                    steps = meaningfulSteps,
+                    extractModifier = ::extractModifier,
+                    colorAccentGreen = getColor(R.color.accent_green),
+                    colorTextPrimary = getColor(R.color.text_primary),
+                    colorSurfaceCard = getColor(R.color.surface_card),
+                    colorBgDark = getColor(R.color.bg_dark)
+                )
 
-                    val tvIcon        = itemView.findViewById<TextView>(R.id.tvStepIcon)
-                    val tvStreet      = itemView.findViewById<TextView>(R.id.tvStepStreet)
-                    val tvInstruction = itemView.findViewById<TextView>(R.id.tvStepInstruction)
-                    val tvDistance    = itemView.findViewById<TextView>(R.id.tvStepDistance)
-                    val viewLine      = itemView.findViewById<View>(R.id.viewStepLine)
-
-                    // Icon + màu nền theo loại bước
-                    tvIcon.text = RouteHelper.maneuverIcon(step.maneuver,
-                        extractModifier(step.instruction))
-                    when (step.maneuver) {
-                        "depart" -> tvIcon.setBackgroundResource(R.drawable.bg_step_icon_depart)
-                        "arrive" -> tvIcon.setBackgroundResource(R.drawable.bg_step_icon_arrive)
-                        else     -> tvIcon.setBackgroundResource(R.drawable.bg_step_icon)
-                    }
-
-                    // Tên đường: ưu tiên tên có nghĩa
-                    tvStreet.text = when {
-                        step.streetName.isNotEmpty() -> step.streetName
-                        step.maneuver == "depart"    -> "Điểm xuất phát"
-                        step.maneuver == "arrive"    -> "Điểm đến"
-                        else                         -> "(Không có tên đường)"
-                    }
-                    tvStreet.setTextColor(
-                        if (step.maneuver == "arrive")
-                            getColor(R.color.accent_green)
-                        else
-                            getColor(R.color.text_primary)
-                    )
-
-                    tvInstruction.text = step.instruction
-
-                    // Khoảng cách
-                    if (step.distanceM > 0) {
-                        tvDistance.text       = RouteHelper.formatDistance(step.distanceM)
-                        tvDistance.visibility = View.VISIBLE
-                    } else {
-                        tvDistance.visibility = View.GONE
-                    }
-
-                    // Ẩn đường nối ở bước cuối
-                    viewLine.visibility = if (index == meaningfulSteps.lastIndex)
-                        View.INVISIBLE else View.VISIBLE
-
-                    // Nền xen kẽ cho dễ đọc
-                    itemView.setBackgroundColor(
-                        if (index % 2 == 0) getColor(R.color.surface_card)
-                        else getColor(R.color.bg_dark)
-                    )
-
-                    layoutSteps.addView(itemView)
-                }
-
-                scrollSteps.visibility = View.VISIBLE
+                recyclerSteps.visibility = View.VISIBLE
             }
         }
     }

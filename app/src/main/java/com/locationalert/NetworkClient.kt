@@ -38,9 +38,14 @@ object NetworkClient {
 
         val builder = OkHttpClient.Builder()
             .connectionSpecs(listOf(modernSpec, ConnectionSpec.COMPATIBLE_TLS))
-            .connectTimeout(20, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
+            // 10s thay vì 20s — OSRM API thường phản hồi <3s khi hoạt động
+            // bình thường. Với 2 endpoint thử tuần tự, 20s/endpoint nghĩa là
+            // worst-case tới 40s treo dialog nếu cả 2 đều chậm/không phản
+            // hồi. 10s vẫn đủ rộng rãi cho mạng di động chậm, giảm worst-case
+            // xuống còn 20s.
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
 
         // Khởi tạo SSLContext tường minh — lấy đúng Conscrypt provider

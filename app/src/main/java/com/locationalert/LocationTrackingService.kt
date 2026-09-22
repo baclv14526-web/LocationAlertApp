@@ -148,7 +148,12 @@ class LocationTrackingService : Service() {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3_000L)
             .setWaitForAccurateLocation(false)
             .setMinUpdateIntervalMillis(1_500L)
-            .setMinUpdateDistanceMeters(1f)
+            // 3m thay vì 1m — GPS có sai số tự nhiên (drift) 3-5m ngay cả khi
+            // đứng yên. Ngưỡng 1m khiến callback bắn liên tục dù không di
+            // chuyển thật, tốn CPU xử lý mỗi lần + tốn pin do GPS chip phải
+            // wake up thường xuyên hơn cần thiết. 3m vẫn đủ chính xác cho
+            // radius cảnh báo 20-300m.
+            .setMinUpdateDistanceMeters(3f)
             .build()
 
         locationCallback = object : LocationCallback() {

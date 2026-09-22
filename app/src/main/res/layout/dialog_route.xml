@@ -89,20 +89,16 @@
         android:gravity="center"
         android:visibility="gone"/>
 
-    <!-- Danh sách bước đường -->
-    <ScrollView
+    <!-- Danh sách bước đường — RecyclerView để tái sử dụng view (recycling)
+         thay vì inflate toàn bộ 20-30 bước cùng lúc. Quan trọng trên thiết bị
+         RAM thấp như Realme 2, đặc biệt với route đường dài nhiều bước. -->
+    <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/scrollRouteSteps"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:maxHeight="420dp"
-        android:visibility="gone">
-
-        <LinearLayout
-            android:id="@+id/layoutRouteSteps"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingBottom="8dp"/>
-    </ScrollView>
+        android:nestedScrollingEnabled="true"
+        android:visibility="gone"
+        android:paddingBottom="8dp"/>
 
 </LinearLayout>
