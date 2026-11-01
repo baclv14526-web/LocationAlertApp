@@ -1,8 +1,11 @@
 package com.locationalert
 
+import android.Manifest
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.location.Location
 import android.media.AudioAttributes
 import android.media.MediaPlayer
@@ -11,6 +14,7 @@ import android.net.Uri
 import android.os.*
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
 
 class LocationTrackingService : Service() {
@@ -75,7 +79,32 @@ class LocationTrackingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, buildNotification("Sẵn sàng theo dõi..."))
+        // Android 14+ (targetSdk 34): startForeground(type=location) ném SecurityException
+        // nếu chưa có quyền vị trí. Cũng áp dụng khi hệ thống restart Service (START_STICKY)
+        // sau khi người dùng đã thu hồi quyền → tự dừng thay vì crash.
+        val hasPermission =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+                    PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) {
+            Log.w(TAG, "Thiếu quyền vị trí — không khởi động foreground service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val notification = buildNotification("Sẵn sàng theo dõi...")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground thất bại: ${e.message}", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         return START_STICKY
     }
 

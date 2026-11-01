@@ -1,6 +1,7 @@
 package com.locationalert
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
@@ -22,6 +23,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.google.android.material.snackbar.Snackbar
 import com.locationalert.databinding.ActivityMainBinding
 import okhttp3.Request
@@ -71,6 +75,10 @@ class MainActivity : AppCompatActivity() {
             "Một số quyền bị từ chối. Ứng dụng có thể không hoạt động đúng.",
             Snackbar.LENGTH_LONG
         ).show()
+        // Chỉ khởi động Service SAU KHI quyền vị trí đã được cấp (Android 14+
+        // ném SecurityException nếu startForeground(type=location) khi chưa có quyền)
+        ensureServiceBound()
+        fetchInitialLocation()
     }
 
     private val mp3PickerLauncher = registerForActivityResult(
@@ -184,7 +192,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         checkAndRequestPermissions()
         setupUI()
-        bindTrackingService()
+        ensureServiceBound()      // chỉ chạy nếu đã có quyền; nếu chưa, chạy sau khi cấp quyền
+        fetchInitialLocation()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Trường hợp người dùng cấp quyền thủ công trong Cài đặt rồi quay lại app
+        ensureServiceBound()
+        fetchInitialLocation()
     }
 
     override fun onDestroy() {
@@ -248,6 +264,48 @@ class MainActivity : AppCompatActivity() {
         val hasGps    = currentLat != 0.0 && currentLon != 0.0
         val hasTarget = trackingService?.hasTarget() ?: false
         binding.btnShowRoute.visibility = if (hasGps && hasTarget) View.VISIBLE else View.GONE
+    }
+
+    private var serviceStarted = false
+    private var initialLocationRequested = false
+
+    /** Khởi động + bind Service đúng 1 lần, và CHỈ khi đã có quyền vị trí. */
+    private fun ensureServiceBound() {
+        if (serviceStarted || !hasLocationPermission()) return
+        serviceStarted = true
+        bindTrackingService()
+    }
+
+    /**
+     * Lấy vị trí 1 lần ngay khi mở app (không cần bấm "Bắt đầu theo dõi") để nút
+     * "Danh sách đường đi" hiện ngay khi đã có GPS + đích. Trước đây currentLat chỉ
+     * được cập nhật khi tracking chạy nên nút luôn ẩn cho tới lúc bấm Bắt đầu.
+     */
+    @SuppressLint("MissingPermission")   // đã kiểm tra hasLocationPermission() ngay bên dưới
+    private fun fetchInitialLocation() {
+        if (initialLocationRequested || currentLat != 0.0 || !hasLocationPermission()) return
+        initialLocationRequested = true
+        val client = LocationServices.getFusedLocationProviderClient(this)
+        client.lastLocation.addOnSuccessListener { last ->
+            if (last != null) {
+                applyInitialLocation(last)
+            } else {
+                // Chưa có vị trí cache → yêu cầu 1 lần định vị mới
+                client.getCurrentLocation(
+                    Priority.PRIORITY_BALANCED_POWER_ACCURACY,
+                    CancellationTokenSource().token
+                ).addOnSuccessListener { cur -> if (cur != null) applyInitialLocation(cur) }
+            }
+        }
+    }
+
+    private fun applyInitialLocation(loc: android.location.Location) {
+        if (isFinishing || isDestroyed || currentLat != 0.0) return
+        currentLat = loc.latitude
+        currentLon = loc.longitude
+        binding.tvCurrentLocation.text =
+            "📍 %.6f, %.6f\n🎯 Độ chính xác: ±${loc.accuracy.toInt()}m".format(loc.latitude, loc.longitude)
+        updateRouteButtonVisibility()
     }
 
     private fun bindTrackingService() {
@@ -422,9 +480,13 @@ class MainActivity : AppCompatActivity() {
                 tvSummaryDist.text = RouteHelper.formatDistance(result.totalDistanceM)
                 tvSummaryTime.text = RouteHelper.formatDuration(result.totalDurationSec)
 
-                // Lọc bước có ý nghĩa (bỏ bước 0m không phải arrive/depart)
+                // Chỉ giữ các bước có tên đường. Điểm xuất phát (depart) và đích
+                // (arrive) luôn được giữ để timeline có đủ 2 đầu, dù OSRM không
+                // trả tên đường cho 2 điểm này.
                 val meaningfulSteps = result.steps.filter { step ->
-                    step.distanceM > 0 || step.maneuver == "arrive" || step.maneuver == "depart"
+                    step.maneuver == "arrive" ||
+                    step.maneuver == "depart" ||
+                    step.streetName.isNotBlank()
                 }
                 tvStepCount.text = "${meaningfulSteps.size} bước"
 
@@ -494,13 +556,13 @@ class MainActivity : AppCompatActivity() {
 
     // ── Tracking ──────────────────────────────────────────────────────────────
     private fun startTracking() {
+        if (!hasLocationPermission()) { checkAndRequestPermissions(); return }
         if (!isBound || trackingService == null) {
             Toast.makeText(this, "Dịch vụ chưa sẵn sàng", Toast.LENGTH_SHORT).show(); return
         }
         if (!trackingService!!.hasTarget()) {
             Toast.makeText(this, "Vui lòng đặt vị trí đích trước", Toast.LENGTH_SHORT).show(); return
         }
-        if (!hasLocationPermission()) { checkAndRequestPermissions(); return }
         if (!isLocationServiceEnabled()) {
             AlertDialog.Builder(this)
                 .setTitle("Định vị đang tắt")
